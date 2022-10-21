@@ -1,23 +1,77 @@
 (ns mybank-web-api.core
   (:require [io.pedestal.http :as http]
-            [io.pedestal.http.route :as route])
+            [io.pedestal.http.route :as route]
+            [io.pedestal.test :as test-http]
+            [io.pedestal.interceptor :as i])
   (:gen-class))
 
-(defn respond-hello 
-  [request]
-  {:status 200 :body "Olá pedestal!"})
+(defonce server (atom nil))
+
+(defonce contas (atom {:1 {:saldo 100}
+                       :2 {:saldo 200}
+                       :3 {:saldo 300}}))
+
+(defn add-contas-atom [context]
+  (update context :request assoc :contas contas))
+
+(def contas-interceptor
+  {:name  :contas-interceptor
+   :enter add-contas-atom})
+
+(defn get-saldo [{{:keys [id]} :path-params}]
+  (let [id-conta (keyword id)]
+    {:status  200
+     :headers {"Content-Type" "text/plain"}
+     :body    (id-conta @contas "conta inválida!")})) ;; Aqui ele vai pegar a conta existente ou falar q a conta é invalida??
+
+(defn make-deposit! [{{:keys [id]} :path-params
+                      body         :body}]
+  
+  (let [id-conta (keyword id)
+        valor-deposito (-> body slurp parse-double)
+        SIDE-EFFECT! (swap! contas (fn [m] (update-in m [id-conta :saldo] #(+ % valor-deposito))))]
+    {:status  200
+     :headers {"Content-Type" "text/plain"}
+     :body    {:id-conta   id-conta
+               :novo-saldo (id-conta @contas)}}))
 
 (def routes
   (route/expand-routes
-   #{["/hello" 
-      :get respond-hello 
-      :route-name :greet]}))
+   #{["/saldo/:id" :get get-saldo :route-name :saldo]
+     ["/deposito/:id" :post make-deposit! :route-name :deposito]}))
+
+(def service-map-simple {::http/routes routes
+                         ::http/port   8080
+                         ::http/type   :jetty
+                         ::http/join?  false})
+
+(def service-map (-> service-map-simple
+                     http/default-interceptors
+                     (update ::http/interceptors conj (i/interceptor contas-interceptor))))
 
 (defn create-server []
   (http/create-server
-   {::http/routes routes
-    ::http/type :jetty
-    ::http/port 3000}))
+   service-map))
 
 (defn start []
-  (http/start (create-server)))
+  (reset! server (http/start (create-server))))
+
+(defn test-request [server verb url]
+  (test-http/response-for (::http/service-fn @server) verb url))
+(defn test-post [server verb url body]
+  (test-http/response-for (::http/service-fn @server) verb url :body body))
+
+(comment
+  (start)
+  (http/stop @server)
+
+  (test-request server :get "/saldo/1")
+  (test-request server :get "/saldo/2")
+  (test-request server :get "/saldo/3")
+  (test-request server :get "/saldo/4")
+  (test-post server :post "/deposito/1" "199.93")
+  (test-post server :post "/deposito/4" "325.99")
+
+  ;curl http://localhost:9999/saldo/1
+  ;curl -d "199.99" -X POST http://localhost:9999/deposito/1
+  )
