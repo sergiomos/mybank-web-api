@@ -2,43 +2,18 @@
   (:require [io.pedestal.http :as http]
             [io.pedestal.http.route :as route]
             [io.pedestal.test :as test-http]
-            [io.pedestal.interceptor :as i])
+            [io.pedestal.interceptor :as i]
+            [mybank-web-api.interceptors :as app-interceptors])
   (:gen-class))
 
-(defonce server (atom nil))
-
-(defonce contas (atom {:1 {:saldo 100}
-                       :2 {:saldo 200}
-                       :3 {:saldo 300}}))
-
-(defn add-contas-atom [context]
-  (update context :request assoc :contas contas))
-
-(def contas-interceptor
-  {:name  :contas-interceptor
-   :enter add-contas-atom})
-
-(defn get-saldo [{{:keys [id]} :path-params}]
-  (let [id-conta (keyword id)]
-    {:status  200
-     :headers {"Content-Type" "text/plain"}
-     :body    (id-conta @contas "conta inválida!")})) ;; Aqui ele vai pegar a conta existente ou falar q a conta é invalida??
-
-(defn make-deposit! [{{:keys [id]} :path-params
-                      body         :body}]
-  
-  (let [id-conta (keyword id)
-        valor-deposito (-> body slurp parse-double)
-        SIDE-EFFECT! (swap! contas (fn [m] (update-in m [id-conta :saldo] #(+ % valor-deposito))))]
-    {:status  200
-     :headers {"Content-Type" "text/plain"}
-     :body    {:id-conta   id-conta
-               :novo-saldo (id-conta @contas)}}))
+(def supported-types ["text/html" "application/edn" "application/json" "text/plain"])
+(def content-neg-intc (conneg/negotiate-content supported-types))
 
 (def routes
   (route/expand-routes
-   #{["/saldo/:id" :get get-saldo :route-name :saldo]
-     ["/deposito/:id" :post make-deposit! :route-name :deposito]}))
+   #{["/hello" :get app-interceptors/hello-interceptor :route-name :hello]}))
+
+(defonce server (atom nil))
 
 (def service-map-simple {::http/routes routes
                          ::http/port   8080
